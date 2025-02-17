@@ -71,12 +71,12 @@ async def on_message(message):
     # Process commands
     await bot.process_commands(message)
 
-# Updated wallet creation with SHA-256 hashing
+# Updated wallet creation with proper mnemonic generation
 @bot.command()
 async def create_wallet(ctx):
     try:
-        # Generate mnemonic
-        mnemonic_phrase = generate_mnemonic()
+        # Generate mnemonic with 12 words in English
+        mnemonic_phrase = generate_mnemonic(num_words=12, lang="english")
         
         # Create account from mnemonic
         account = Account.from_mnemonic(mnemonic_phrase)
@@ -100,9 +100,26 @@ async def create_wallet(ctx):
             f"⚠️ **IMPORTANT**: Never share your mnemonic phrase with anyone!"
         )
         
-        await ctx.send("✅ Wallet created! Check your DMs for the details.")
+        # Send public confirmation in the channel
+        embed = discord.Embed(
+            title="✅ Wallet Created Successfully",
+            description=f"Wallet address: `{account.address}`\n\nCheck your DMs for the secret recovery phrase!",
+            color=discord.Color.green()
+        )
+        await ctx.send(embed=embed)
+        
     except Exception as e:
-        await ctx.send(f"❌ Error creating wallet: {str(e)}")
+        error_embed = discord.Embed(
+            title="❌ Error Creating Wallet",
+            description=str(e),
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=error_embed)
+
+# Add createwall command as an alias for create_wallet
+@bot.command()
+async def createwall(ctx):
+    await create_wallet(ctx)
 
 # Add MetaMask connection command
 @bot.command()
@@ -232,35 +249,57 @@ async def send_eth(ctx, recipient: str, amount: float):
     except Exception as e:
         await ctx.send(f"Error: {str(e)}")
 
-# Workflow Explanation
+# Add create command as another alias for wallet creation
 @bot.command()
-async def workflow(ctx):
-    workflow_steps = (
-        "1. **Create a Wallet**: Use `!create_wallet` to generate a non-custodial wallet. The mnemonic phrase is sent via DM.\n"
-        "2. **Check Balance**: Use `!balance <wallet_address>` to check Sepolia ETH balance.\n"
-        "3. **Deploy Smart Contract**: Use `!deploy <contract_code>` to compile and deploy your contract.\n"
-        "4. **Send ETH**: Use `!send_eth <recipient_address> <amount>` to send Ethereum transactions.\n"
-        "5. **Interact with AI**: Use `!ai <message>` to chat with LinearArray AI.\n"
-        "6. **Security**: Sensitive data is only visible to the user who owns it."
-    )
-    await ctx.send(workflow_steps)
+async def create(ctx):
+    await create_wallet(ctx)
 
-# Commands List
+# Update Commands List
 @bot.command()
 async def cmds(ctx):
     commands_info = (
         "**Available Commands:**\n"
-        "`!connect` - Link your wallet to the bot.\n"
-        "`!balance <wallet_address>` - Checks the balance of a given Ethereum address.\n"
-        "`!send_eth <recipient_address> <amount>` - Sends Ethereum to a specified address.\n"
-        "`!deploy <contract_code>` - Compiles and deploys a smart contract.\n"
-        "`!history` - View transaction history.\n"
+        "`!create` - Create a new wallet (details sent via DM).\n"
+        "`!create_wallet` or `!createwall` - Alternative commands to create a wallet.\n"
+        "`!connect_metamask` - Link your MetaMask wallet to the bot.\n"
+        "`!verify_wallet <address>` - Verify ownership of your wallet.\n"
+        "`!balance <wallet_address>` - Check the balance of a given Ethereum address.\n"
+        "`!send_eth <recipient_address> <amount>` - Send Ethereum to a specified address.\n"
+        "`!deploy <contract_code>` - Compile and deploy a smart contract.\n"
+        "`!history <address>` - View transaction history.\n"
         "`!price <crypto>` - Get the latest price of a cryptocurrency.\n"
-        "`!ai <message>` - Interacts with LinearArray AI.\n"
         "`!workflow` - Shows the workflow of the bot.\n"
-        "`!cmds` - Displays this list of available commands."
+        "`!cmds` - Displays this list of available commands.\n\n"
+        "**AI Chat:**\n"
+        "Simply mention the bot (@BotName) followed by your message to chat with the AI."
     )
-    await ctx.send(commands_info)
+    
+    embed = discord.Embed(
+        title="📋 Command List",
+        description=commands_info,
+        color=discord.Color.blue()
+    )
+    await ctx.send(embed=embed)
+
+# Update Workflow command to reflect new features
+@bot.command()
+async def workflow(ctx):
+    workflow_steps = (
+        "1. **Create a Wallet**: Use `!create` to generate a non-custodial wallet. The mnemonic phrase is sent via DM.\n"
+        "2. **Connect MetaMask**: Use `!connect_metamask` to link your existing MetaMask wallet.\n"
+        "3. **Check Balance**: Use `!balance <wallet_address>` to check Sepolia ETH balance.\n"
+        "4. **Deploy Smart Contract**: Use `!deploy <contract_code>` to compile and deploy your contract.\n"
+        "5. **Send ETH**: Use `!send_eth <recipient_address> <amount>` to send Ethereum transactions.\n"
+        "6. **Chat with AI**: Simply mention the bot (@BotName) followed by your message.\n"
+        "7. **Security**: Sensitive data is only visible to the user who owns it."
+    )
+    
+    embed = discord.Embed(
+        title="🔄 Bot Workflow",
+        description=workflow_steps,
+        color=discord.Color.green()
+    )
+    await ctx.send(embed=embed)
 
 # Connect Wallet
 @bot.command()
