@@ -42,6 +42,9 @@ client = Groq(api_key=LINEARARRAY_AI_KEY)
 # Store wallet information (in memory - consider using a database in production)
 user_wallets = {}
 
+# Enable HD wallet features
+Account.enable_unaudited_hdwallet_features()
+
 def get_lineararray_response(prompt):
     completion = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -73,7 +76,7 @@ async def on_message(message):
 
 # Updated wallet creation with proper mnemonic generation
 @bot.command()
-async def create_wallet(ctx):
+async def create(ctx):
     try:
         # Generate mnemonic with 12 words in English
         mnemonic_phrase = generate_mnemonic(num_words=12, lang="english")
@@ -119,7 +122,7 @@ async def create_wallet(ctx):
 # Add createwall command as an alias for create_wallet
 @bot.command()
 async def createwall(ctx):
-    await create_wallet(ctx)
+    await create(ctx)
 
 # Add MetaMask connection command
 @bot.command()
@@ -249,25 +252,23 @@ async def send_eth(ctx, recipient: str, amount: float):
     except Exception as e:
         await ctx.send(f"Error: {str(e)}")
 
-# Add create command as another alias for wallet creation
-@bot.command()
-async def create(ctx):
-    await create_wallet(ctx)
-
-# Update Commands List
+# Update Commands List with cleaned up commands
 @bot.command()
 async def cmds(ctx):
     commands_info = (
         "**Available Commands:**\n"
+        "**Wallet Management:**\n"
         "`!create` - Create a new wallet (details sent via DM).\n"
-        "`!create_wallet` or `!createwall` - Alternative commands to create a wallet.\n"
         "`!connect_metamask` - Link your MetaMask wallet to the bot.\n"
         "`!verify_wallet <address>` - Verify ownership of your wallet.\n"
-        "`!balance <wallet_address>` - Check the balance of a given Ethereum address.\n"
+        "`!balance <wallet_address>` - Check the balance of a given Ethereum address.\n\n"
+        "**Transactions & Contracts:**\n"
         "`!send_eth <recipient_address> <amount>` - Send Ethereum to a specified address.\n"
         "`!deploy <contract_code>` - Compile and deploy a smart contract.\n"
-        "`!history <address>` - View transaction history.\n"
-        "`!price <crypto>` - Get the latest price of a cryptocurrency.\n"
+        "`!history <address>` - View transaction history.\n\n"
+        "**Market Information:**\n"
+        "`!price <crypto>` - Get the latest price of a cryptocurrency.\n\n"
+        "**Help & Information:**\n"
         "`!workflow` - Shows the workflow of the bot.\n"
         "`!cmds` - Displays this list of available commands.\n\n"
         "**AI Chat:**\n"
@@ -281,7 +282,7 @@ async def cmds(ctx):
     )
     await ctx.send(embed=embed)
 
-# Update Workflow command to reflect new features
+# Update Workflow command
 @bot.command()
 async def workflow(ctx):
     workflow_steps = (
