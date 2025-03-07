@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import requests
 import hashlib
 import json
+import solcx
 
 # Load environment variables
 load_dotenv()
@@ -240,33 +241,88 @@ async def balance(ctx, user: discord.User = None):
     except Exception as e:
         await ctx.send(f"Error fetching balance: {str(e)}")
 
-# Deploy Smart Contract
+# Ensure Solidity Compiler is installed
+solcx.install_solc('0.8.21')
+solcx.set_solc_version('0.8.21')
+
 @bot.command()
-async def deploy(ctx, *, contract_code):
+async def deploy(ctx):
     try:
-        compiled_sol = compile_source(contract_code)
+        # Check for attached file
+        if not ctx.message.attachments:
+            await ctx.send("❌ Please attach a valid Solidity (.sol) file.")
+            return
+
+        attachment = ctx.message.attachments[0]
+        if not attachment.filename.endswith('.sol'):
+            await ctx.send("❌ Please attach a valid Solidity (.sol) file.")
+            return
+
+        # Read the contract code from the attachment
+        contract_code = await attachment.read()
+        contract_code = contract_code.decode('utf-8')
+
+        # Compile the contract
+        try:
+            compiled_sol = solcx.compile_source(contract_code, output_values=["abi", "bin"])
+        except solcx.exceptions.SolcError as e:
+            await ctx.send(f"❌ Compilation Error: {str(e)}")
+            return
+
         contract_id, contract_interface = compiled_sol.popitem()
         bytecode = contract_interface["bin"]
         abi = contract_interface["abi"]
 
-        account = Account.from_key(os.getenv("PRIVATE_KEY"))
+        # Load Private Key from ENV
+        private_key = os.getenv("PRIVATE_KEY")
+        if not private_key:
+            await ctx.send("❌ Error: Private key is missing in environment variables.")
+            return
+        
+        # Create account object
+        account = Account.from_key(private_key)
         w3.eth.default_account = account.address
 
+        # Deploy contract
         Contract = w3.eth.contract(abi=abi, bytecode=bytecode)
-        tx = Contract.constructor().build_transaction({
+        nonce = w3.eth.get_transaction_count(account.address)
+
+        # Example: If the constructor requires a uint256 argument
+        constructor_args = (123456,)  # Replace with the actual uint256 value
+
+        # Estimate gas for deployment
+        estimated_gas = Contract.constructor(*constructor_args).estimate_gas()
+
+        # Build transaction
+        tx = Contract.constructor(*constructor_args).build_transaction({
             "from": account.address,
-            "nonce": w3.eth.get_transaction_count(account.address),
-            "gas": 2000000,
+            "nonce": nonce,
+            "gas": estimated_gas + 50000,  # Adding buffer
             "gasPrice": w3.to_wei("10", "gwei"),
         })
 
-        signed_tx = w3.eth.account.sign_transaction(tx, account.privateKey)
+        # Sign and send transaction
+        signed_tx = w3.eth.account.sign_transaction(tx, private_key)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+
+        # Wait for receipt
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
 
-        await ctx.send(f"Contract Deployed!\nAddress: {receipt.contractAddress}\nTransaction Hash: {tx_hash.hex()}")
+        # Success message
+        embed = discord.Embed(
+            title="✅ Smart Contract Deployed!",
+            description=(
+                f"**Contract Address**: `{receipt.contractAddress}`\n"
+                f"**Transaction Hash**: [{tx_hash.hex()}](https://sepolia.etherscan.io/tx/{tx_hash.hex()})"
+            ),
+            color=discord.Color.green()
+        )
+        await ctx.send(embed=embed)
+
+    except ValueError as ve:
+        await ctx.send(f"❌ Error: Invalid argument type. Ensure all arguments are correctly formatted. {str(ve)}")
     except Exception as e:
-        await ctx.send(f"Error: {str(e)}")
+        await ctx.send(f"❌ Error deploying contract: {str(e)}")
 
 # Send Transaction
 @bot.command()
@@ -411,4 +467,3 @@ async def price(ctx, crypto: str):
         await ctx.send(f"Error fetching price: {str(e)}")
 
 bot.run(BOT_TOKEN)
-
