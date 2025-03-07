@@ -45,6 +45,22 @@ user_wallets = {}
 # Enable HD wallet features
 Account.enable_unaudited_hdwallet_features()
 
+# Load wallet data from a JSON file
+def load_wallet_data():
+    try:
+        with open('wallets.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+# Save wallet data to a JSON file
+def save_wallet_data():
+    with open('wallets.json', 'w') as f:
+        json.dump(user_wallets, f)
+
+# Load existing wallet data at startup
+user_wallets = load_wallet_data()
+
 def get_lineararray_response(prompt):
     completion = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -78,6 +94,14 @@ async def on_message(message):
 @bot.command()
 async def create(ctx):
     try:
+        user_id = str(ctx.author.id)
+        
+        # Check if the user already has a wallet
+        if user_id in user_wallets:
+            existing_wallet = user_wallets[user_id]
+            await ctx.send(f"🔐 You already have a wallet!\nAddress: `{existing_wallet['address']}`")
+            return
+        
         # Generate mnemonic with 12 words in English
         mnemonic_phrase = generate_mnemonic(num_words=12, lang="english")
         
@@ -88,10 +112,13 @@ async def create(ctx):
         mnemonic_hash = hashlib.sha256(mnemonic_phrase.encode()).hexdigest()
         
         # Store wallet info
-        user_wallets[str(ctx.author.id)] = {
+        user_wallets[user_id] = {
             'address': account.address,
             'mnemonic_hash': mnemonic_hash
         }
+        
+        # Save updated wallet data
+        save_wallet_data()
         
         # Send wallet details via DM
         dm_channel = await ctx.author.create_dm()
@@ -197,11 +224,19 @@ async def submit_signature(ctx, signature: str):
 
 # Check Balance
 @bot.command()
-async def balance(ctx, address: str):
+async def balance(ctx, user: discord.User = None):
     try:
-        eth_balance = w3.eth.get_balance(address)
-        eth_balance = w3.from_wei(eth_balance, "ether")
-        await ctx.send(f"Balance of {address}: {eth_balance} Sepolia ETH")
+        # Use the mentioned user's ID if provided, otherwise use the command author's ID
+        user_id = str(user.id) if user else str(ctx.author.id)
+        
+        # Check if the user has a linked wallet
+        if user_id in user_wallets and 'address' in user_wallets[user_id]:
+            address = user_wallets[user_id]['address']
+            eth_balance = w3.eth.get_balance(address)
+            eth_balance = w3.from_wei(eth_balance, "ether")
+            await ctx.send(f"{user.mention if user else ctx.author.mention}, your balance is: {eth_balance} Sepolia ETH")
+        else:
+            await ctx.send(f"{user.mention if user else ctx.author.mention}, you don't have a linked wallet. Use `!create` to create one.")
     except Exception as e:
         await ctx.send(f"Error fetching balance: {str(e)}")
 
@@ -317,36 +352,41 @@ async def connect(ctx):
 
 # Transaction History
 @bot.command()
-async def history(ctx, address: str = None):
+async def history(ctx, user: discord.User = None):
     try:
-        if not address:
-            await ctx.send("Please provide an address to check transaction history.")
-            return
-            
-        # Get the latest block number
-        latest_block = w3.eth.block_number
-        # We'll look at the last 10 blocks for transactions
-        transactions = []
-        for i in range(max(0, latest_block - 10), latest_block + 1):
-            block = w3.eth.get_block(i, full_transactions=True)
-            for tx in block.transactions:
-                if tx['from'].lower() == address.lower() or tx['to'] and tx['to'].lower() == address.lower():
-                    transactions.append(tx)
-
-        if not transactions:
-            await ctx.send("No recent transactions found for this address.")
-            return
-
-        # Format and send transaction history
-        history_text = "**Recent Transactions:**\n"
-        for tx in transactions[:5]:  # Show last 5 transactions
-            value_eth = w3.from_wei(tx['value'], 'ether')
-            history_text += f"Hash: {tx['hash'].hex()}\n"
-            history_text += f"From: {tx['from']}\n"
-            history_text += f"To: {tx['to']}\n"
-            history_text += f"Value: {value_eth} ETH\n\n"
+        # Use the mentioned user's ID if provided, otherwise use the command author's ID
+        user_id = str(user.id) if user else str(ctx.author.id)
         
-        await ctx.send(history_text)
+        # Check if the user has a linked wallet
+        if user_id in user_wallets and 'address' in user_wallets[user_id]:
+            address = user_wallets[user_id]['address']
+            
+            # Get the latest block number
+            latest_block = w3.eth.block_number
+            # We'll look at the last 10 blocks for transactions
+            transactions = []
+            for i in range(max(0, latest_block - 10), latest_block + 1):
+                block = w3.eth.get_block(i, full_transactions=True)
+                for tx in block.transactions:
+                    if tx['from'].lower() == address.lower() or tx['to'] and tx['to'].lower() == address.lower():
+                        transactions.append(tx)
+
+            if not transactions:
+                await ctx.send(f"{user.mention if user else ctx.author.mention}, no recent transactions found for your address.")
+                return
+
+            # Format and send transaction history
+            history_text = f"**Recent Transactions for {user.mention if user else ctx.author.mention}:**\n"
+            for tx in transactions[:5]:  # Show last 5 transactions
+                value_eth = w3.from_wei(tx['value'], 'ether')
+                history_text += f"Hash: {tx['hash'].hex()}\n"
+                history_text += f"From: {tx['from']}\n"
+                history_text += f"To: {tx['to']}\n"
+                history_text += f"Value: {value_eth} ETH\n\n"
+            
+            await ctx.send(history_text)
+        else:
+            await ctx.send(f"{user.mention if user else ctx.author.mention}, you don't have a linked wallet. Use `!create` to create one.")
     except Exception as e:
         await ctx.send(f"Error fetching history: {str(e)}")
 
@@ -371,3 +411,4 @@ async def price(ctx, crypto: str):
         await ctx.send(f"Error fetching price: {str(e)}")
 
 bot.run(BOT_TOKEN)
+
