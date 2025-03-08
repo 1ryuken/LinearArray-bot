@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 import requests
 import hashlib
 import json
-import solcx
 
 # Load environment variables
 load_dotenv()
@@ -225,104 +224,78 @@ async def submit_signature(ctx, signature: str):
 
 # Check Balance
 @bot.command()
-async def balance(ctx, user: discord.User = None):
+async def balance(ctx, *, address_or_user: str = None):
+    """Check the balance of the connected wallet, a specified address, or a mentioned user."""
     try:
-        # Use the mentioned user's ID if provided, otherwise use the command author's ID
-        user_id = str(user.id) if user else str(ctx.author.id)
+        # Default to the command author
+        user_id = str(ctx.author.id)
+        target_address = None
+        mentioned_user = None
+
+        # Check if a user was mentioned or an address was provided
+        if address_or_user:
+            # Check if it's a user mention
+            if address_or_user.startswith('<@') and address_or_user.endswith('>'):
+                # Extract user ID from mention
+                mentioned_id = address_or_user.strip('<@!>')
+                try:
+                    mentioned_user = await bot.fetch_user(int(mentioned_id))
+                    user_id = str(mentioned_user.id)
+                except:
+                    await ctx.send("❌ Invalid user mention.")
+                    return
+            # Check if it's an Ethereum address
+            elif Web3.is_address(address_or_user):
+                target_address = address_or_user
+            else:
+                await ctx.send("❌ Invalid input. Please provide a valid Ethereum address or mention a user.")
+                return
+
+        # If no specific address was provided, use the user's connected wallet
+        if not target_address:
+            if user_id in user_wallets and 'address' in user_wallets[user_id]:
+                target_address = user_wallets[user_id]['address']
+            else:
+                user_display = mentioned_user.mention if mentioned_user else ctx.author.mention
+                await ctx.send(f"{user_display}, you don't have a linked wallet. Use `!create` to create one.")
+                return
+
+        # Fetch and display the balance
+        eth_balance = w3.eth.get_balance(target_address)
+        eth_balance = w3.from_wei(eth_balance, "ether")
         
-        # Check if the user has a linked wallet
-        if user_id in user_wallets and 'address' in user_wallets[user_id]:
-            address = user_wallets[user_id]['address']
-            eth_balance = w3.eth.get_balance(address)
-            eth_balance = w3.from_wei(eth_balance, "ether")
-            await ctx.send(f"{user.mention if user else ctx.author.mention}, your balance is: {eth_balance} Sepolia ETH")
-        else:
-            await ctx.send(f"{user.mention if user else ctx.author.mention}, you don't have a linked wallet. Use `!create` to create one.")
+        user_display = mentioned_user.mention if mentioned_user else ctx.author.mention
+        await ctx.send(f"{user_display}, the balance for `{target_address}` is: {eth_balance} Sepolia ETH")
     except Exception as e:
         await ctx.send(f"Error fetching balance: {str(e)}")
 
-# Ensure Solidity Compiler is installed
-solcx.install_solc('0.8.21')
-solcx.set_solc_version('0.8.21')
-
+# Deploy Smart Contract
 @bot.command()
-async def deploy(ctx):
+async def deploy(ctx, *, contract_code):
     try:
-        # Check for attached file
-        if not ctx.message.attachments:
-            await ctx.send("❌ Please attach a valid Solidity (.sol) file.")
-            return
-
-        attachment = ctx.message.attachments[0]
-        if not attachment.filename.endswith('.sol'):
-            await ctx.send("❌ Please attach a valid Solidity (.sol) file.")
-            return
-
-        # Read the contract code from the attachment
-        contract_code = await attachment.read()
-        contract_code = contract_code.decode('utf-8')
-
-        # Compile the contract
-        try:
-            compiled_sol = solcx.compile_source(contract_code, output_values=["abi", "bin"])
-        except solcx.exceptions.SolcError as e:
-            await ctx.send(f"❌ Compilation Error: {str(e)}")
-            return
-
+        compiled_sol = compile_source(contract_code)
         contract_id, contract_interface = compiled_sol.popitem()
         bytecode = contract_interface["bin"]
         abi = contract_interface["abi"]
 
-        # Load Private Key from ENV
-        private_key = os.getenv("PRIVATE_KEY")
-        if not private_key:
-            await ctx.send("❌ Error: Private key is missing in environment variables.")
-            return
-        
-        # Create account object
-        account = Account.from_key(private_key)
+        account = Account.from_key(os.getenv("PRIVATE_KEY"))
         w3.eth.default_account = account.address
 
-        # Deploy contract
         Contract = w3.eth.contract(abi=abi, bytecode=bytecode)
-        nonce = w3.eth.get_transaction_count(account.address)
-
-        # Example: If the constructor requires a uint256 argument
-        constructor_args = (123456,)  # Replace with the actual uint256 value
-
-        # Estimate gas for deployment
-        estimated_gas = Contract.constructor(*constructor_args).estimate_gas()
-
-        # Build transaction
-        tx = Contract.constructor(*constructor_args).build_transaction({
+        tx = Contract.constructor().build_transaction({
             "from": account.address,
-            "nonce": nonce,
-            "gas": estimated_gas + 50000,  # Adding buffer
+            "nonce": w3.eth.get_transaction_count(account.address),
+            "gas": 2000000,
             "gasPrice": w3.to_wei("10", "gwei"),
         })
 
-        # Sign and send transaction
-        signed_tx = w3.eth.account.sign_transaction(tx, private_key)
+        signed_tx = w3.eth.account.sign_transaction(tx, account.privateKey)
         tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-
-        # Wait for receipt
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
 
-        # Success message
-        embed = discord.Embed(
-            title="✅ Smart Contract Deployed!",
-            description=(
-                f"**Contract Address**: `{receipt.contractAddress}`\n"
-                f"**Transaction Hash**: [{tx_hash.hex()}](https://sepolia.etherscan.io/tx/{tx_hash.hex()})"
-            ),
-            color=discord.Color.green()
-        )
-        await ctx.send(embed=embed)
-
-    except ValueError as ve:
-        await ctx.send(f"❌ Error: Invalid argument type. Ensure all arguments are correctly formatted. {str(ve)}")
+        await ctx.send(f"Contract Deployed!\nAddress: {receipt.contractAddress}\nTransaction Hash: {tx_hash.hex()}")
     except Exception as e:
-        await ctx.send(f"❌ Error deploying contract: {str(e)}")
+        await ctx.send(f"Error: {str(e)}")
 
 # Send Transaction
 @bot.command()
@@ -363,7 +336,7 @@ async def cmds(ctx):
         "`!workflow` - Shows the workflow of the bot.\n"
         "`!cmds` - Displays this list of available commands.\n\n"
         "**AI Chat:**\n"
-        "Simply mention the bot (@BotName) followed by your message to chat with the AI."
+        "Simply mention the bot (@LinearArray) followed by your message to chat with the AI."
     )
     
     embed = discord.Embed(
